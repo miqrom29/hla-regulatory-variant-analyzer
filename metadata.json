@@ -1,0 +1,5 @@
+{
+  "name": "HLA Regulatory Variant Analyzer",
+  "description": "Expert bioinformatics tool for clinical and population genomics, specialized in the Iberian Peninsula variability and demographic history.",
+  "requestFramePermissions": []
+}
