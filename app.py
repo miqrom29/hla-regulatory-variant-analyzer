@@ -1,130 +1,149 @@
-mistralai
-/
-Mistral-7B-Instruct-v0.2
+import requests
+import streamlit as st
 
-like
-3.09k
+# ----------------- Configuración básica -----------------
+st.set_page_config(page_title="HLA Regulatory Variant Analyzer", page_icon="🧬")
 
-Follow
-Mistral AI_
-15.6k
-Text Generation
-Transformers
-PyTorch
-Safetensors
-mistral
-finetuned
-mistral-common
-conversational
-text-generation-inference
+st.title("HLA Regulatory Variant Analyzer")
+st.write(
+    "Herramienta experimental para explorar el posible impacto regulatorio de variantes "
+    "en la región HLA usando un modelo open-source (Mistral-7B-Instruct) vía Hugging Face."
+)
 
-arxiv:
-2310.06825
+st.sidebar.header("Configuración del modelo")
 
-License:
-apache-2.0
-Model card
-Files
-xet
-Community
-225
- A newer version of this model is available: mistralai/Mistral-7B-Instruct-v0.3
-Model Card for Mistral-7B-Instruct-v0.2
-Encode and Decode with mistral_common
-from mistral_common.tokens.tokenizers.mistral import MistralTokenizer
-from mistral_common.protocol.instruct.messages import UserMessage
-from mistral_common.protocol.instruct.request import ChatCompletionRequest
+# Por defecto, Mistral-7B-Instruct v0.2
+model = st.sidebar.text_input(
+    "Modelo HF (text-generation)",
+    value="mistralai/Mistral-7B-Instruct-v0.2",
+    help="Modelo instruct en Hugging Face. Puedes dejar el valor por defecto.",
+)
 
-mistral_models_path = "MISTRAL_MODELS_PATH"
+# ----------------- API key de Hugging Face -----------------
+def get_hf_key():
+    val = None
+    if "secrets" in dir(st):
+        val = st.secrets.get("HF_API_KEY", None)
+    if val is None:
+        val = st.sidebar.text_input("HF API key", type="password")
+    return val
 
-tokenizer = MistralTokenizer.v1()
+hf_api_key = get_hf_key()
 
-completion_request = ChatCompletionRequest(messages=[UserMessage(content="Explain Machine Learning to me in a nutshell.")])
+# ----------------- Datos de entrada HLA -----------------
+st.subheader("Datos de entrada")
 
-tokens = tokenizer.encode_chat_completion(completion_request).tokens
+hla_genotype = st.text_input(
+    "HLA genotipo (ej. HLA-A*01:01; HLA-B*08:01; HLA-C*07:01)",
+)
 
-Inference with mistral_inference
-from mistral_inference.transformer import Transformer
-from mistral_inference.generate import generate
+variant = st.text_input(
+    "Variante regulatoria (rsID o pos/ref/alt)",
+    help="Ej. rs12345-A, o chr6:32500000 A>G",
+)
 
-model = Transformer.from_folder(mistral_models_path)
-out_tokens, _ = generate([tokens], model, max_tokens=64, temperature=0.0, eos_id=tokenizer.instruct_tokenizer.tokenizer.eos_id)
+extra_context = st.text_area(
+    "Contexto clínico / funcional (opcional)",
+    help="Ej. enfermedad, tejido, expresión conocida, ancestría, etc.",
+)
 
-result = tokenizer.decode(out_tokens[0])
+st.markdown(
+    "> Aviso: esta herramienta es solo para **uso exploratorio/investigación**. "
+    "No proporciona diagnóstico médico ni recomendaciones clínicas."
+)
 
-print(result)
+# ----------------- Historial de chat -----------------
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-Inference with hugging face transformers
-from transformers import AutoModelForCausalLM
+for m in st.session_state.messages:
+    with st.chat_message(m["role"]):
+        st.markdown(m["content"])
 
-model = AutoModelForCausalLM.from_pretrained("mistralai/Mistral-7B-Instruct-v0.2")
-model.to("cuda")
+# ----------------- Construcción del prompt -----------------
+def build_system_prompt():
+    return (
+        "Eres un experto en genética HLA y variantes regulatorias en la región MHC. "
+        "Analizas cómo variantes en promotores, enhancers, sitios de unión de factores de transcripción, "
+        "eQTLs, splicing y otros mecanismos pueden modular la expresión de alelos HLA. "
+        "No des diagnósticos médicos ni recomendaciones terapéuticas; limita tu respuesta "
+        "a consideraciones mecanísticas y de biología molecular. "
+        "Indica claramente cuando algo sea especulativo por falta de evidencia."
+    )
 
-generated_ids = model.generate(tokens, max_new_tokens=1000, do_sample=True)
+def build_user_prompt(hla_genotype, variant, extra_context, user_query):
+    base = "Información de contexto:\n"
+    base += f"- HLA genotipo: {hla_genotype or 'no especificado'}\n"
+    base += f"- Variante regulatoria: {variant or 'no especificada'}\n"
+    if extra_context:
+        base += f"- Contexto adicional: {extra_context}\n"
+    base += "\nTarea:\n"
+    base += (
+        "1) Describe posibles mecanismos regulatorios implicados (promotor, enhancer, splicing, miRNA binding, eQTL, etc.).\n"
+        "2) Comenta, de forma general, ejemplos típicos conocidos en HLA (sin inventar papers concretos).\n"
+        "3) Da un resumen final claro y conciso en lenguaje comprensible para genetistas clínicos.\n"
+    )
+    if user_query:
+        base += f"\nPregunta específica del usuario: {user_query}\n"
+    return base
 
-# decode with mistral tokenizer
-result = tokenizer.decode(generated_ids[0].tolist())
-print(result)
+def build_mistral_inst_prompt(system_prompt, user_prompt):
+    """
+    Mistral Instruct usa formato tipo:
+    <s>[INST] <<SYS>> ... <</SYS>> instrucción [/INST]
+    """
+    sys_block = f"<<SYS>>\n{system_prompt}\n<</SYS>>\n\n"
+    inst = sys_block + user_prompt
+    full = f"<s>[INST] {inst} [/INST]"
+    return full
 
-PRs to correct the transformers tokenizer so that it gives 1-to-1 the same results as the mistral_common reference implementation are very welcome!
+# ----------------- Llamada a Hugging Face (Mistral) -----------------
+def call_hf_mistral(system_prompt, user_prompt):
+    if not hf_api_key:
+        return "Falta la HF API key. Añádela en Secrets o en el sidebar."
 
-The Mistral-7B-Instruct-v0.2 Large Language Model (LLM) is an instruct fine-tuned version of the Mistral-7B-v0.2.
+    headers = {
+        "Authorization": f"Bearer {hf_api_key}",
+        "Content-Type": "application/json",
+    }
 
-Mistral-7B-v0.2 has the following changes compared to Mistral-7B-v0.1
+    prompt = build_mistral_inst_prompt(system_prompt, user_prompt)
 
-32k context window (vs 8k context in v0.1)
-Rope-theta = 1e6
-No Sliding-Window Attention
-For full details of this model please read our paper and release blog post.
+    payload = {
+        "inputs": prompt,
+        "parameters": {
+            "max_new_tokens": 800,
+            "temperature": 0.4,
+            "top_p": 0.9,
+            "do_sample": True,
+            "return_full_text": False,
+        },
+    }
 
-Instruction format
-In order to leverage instruction fine-tuning, your prompt should be surrounded by [INST] and [/INST] tokens. The very first instruction should begin with a begin of sentence id. The next instructions should not. The assistant generation will be ended by the end-of-sentence token id.
+    url = f"https://api-inference.huggingface.co/models/{model}"
+    try:
+        r = requests.post(url, headers=headers, json=payload, timeout=60)
+        r.raise_for_status()
+    except Exception as e:
+        return f"Error al llamar a Hugging Face: {e}\nRespuesta: {getattr(r, 'text', '')}"
 
-E.g.
+    data = r.json()
+    # Formato típico: [{"generated_text": "..."}]
+    if isinstance(data, list) and len(data) > 0 and "generated_text" in data[0]:
+        return data[0]["generated_text"].strip()
+    return str(data)
 
-text = "<s>[INST] What is your favourite condiment? [/INST]"
-"Well, I'm quite partial to a good squeeze of fresh lemon juice. It adds just the right amount of zesty flavour to whatever I'm cooking up in the kitchen!</s> "
-"[INST] Do you have mayonnaise recipes? [/INST]"
+# ----------------- Chat -----------------
+if user_query := st.chat_input("Pregunta sobre el impacto regulatorio, o pide un resumen general."):
+    st.session_state.messages.append({"role": "user", "content": user_query})
+    with st.chat_message("user"):
+        st.markdown(user_query)
 
-This format is available as a chat template via the apply_chat_template() method:
+    with st.chat_message("assistant"):
+        with st.spinner("Analizando con Mistral vía Hugging Face..."):
+            system_prompt = build_system_prompt()
+            user_prompt = build_user_prompt(hla_genotype, variant, extra_context, user_query)
+            response = call_hf_mistral(system_prompt, user_prompt)
+            st.markdown(response)
 
-from transformers import AutoModelForCausalLM, AutoTokenizer
-
-device = "cuda" # the device to load the model onto
-
-model = AutoModelForCausalLM.from_pretrained("mistralai/Mistral-7B-Instruct-v0.2")
-tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-Instruct-v0.2")
-
-messages = [
-    {"role": "user", "content": "What is your favourite condiment?"},
-    {"role": "assistant", "content": "Well, I'm quite partial to a good squeeze of fresh lemon juice. It adds just the right amount of zesty flavour to whatever I'm cooking up in the kitchen!"},
-    {"role": "user", "content": "Do you have mayonnaise recipes?"}
-]
-
-encodeds = tokenizer.apply_chat_template(messages, return_tensors="pt")
-
-model_inputs = encodeds.to(device)
-model.to(device)
-
-generated_ids = model.generate(model_inputs, max_new_tokens=1000, do_sample=True)
-decoded = tokenizer.batch_decode(generated_ids)
-print(decoded[0])
-
-Troubleshooting
-If you see the following error:
-Traceback (most recent call last):
-File "", line 1, in
-File "/transformers/models/auto/auto_factory.py", line 482, in from_pretrained
-config, kwargs = AutoConfig.from_pretrained(
-File "/transformers/models/auto/configuration_auto.py", line 1022, in from_pretrained
-config_class = CONFIG_MAPPING[config_dict["model_type"]]
-File "/transformers/models/auto/configuration_auto.py", line 723, in getitem
-raise KeyError(key)
-KeyError: 'mistral'
-
-Installing transformers from source should solve the issue pip install git+https://github.com/huggingface/transformers
-
-This should not be required after transformers-v4.33.4.
-
-Limitations
-The Mistral 7B Instruct model is a quick demonstration that the base model can be easily fine-tuned to achieve compelling performance. It does not have any moderation mechanisms. We're looking forward to engaging with the community on ways to make the model finely respect guardrails, allowing for deployment in environments requiring moderated outputs.
+    st.session_state.messages.append({"role": "assistant", "content": response})
