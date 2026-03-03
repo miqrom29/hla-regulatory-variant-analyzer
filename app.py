@@ -1,4 +1,3 @@
-import os
 import streamlit as st
 from openai import OpenAI  # Cliente OpenAI, pero apuntando a Hugging Face router
 
@@ -130,4 +129,5 @@ if user_query := st.chat_input("Pregunta sobre el impacto regulatorio, o pide un
             st.markdown(response)
 
     st.session_state.messages.append({"role": "assistant", "content": response})
+
 
