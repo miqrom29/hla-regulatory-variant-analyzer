@@ -1,81 +1,130 @@
-import streamlit as st
-# importa aquí tus módulos locales cuando los tengas:
-# from core import load_hla_data, annotate_variant, ...
+mistralai
+/
+Mistral-7B-Instruct-v0.2
 
-from openai import OpenAI
-import anthropic
-import requests
+like
+3.09k
 
-st.set_page_config(page_title="HLA Regulatory Variant Analyzer", page_icon="🧬")
-st.title("HLA Regulatory Variant Analyzer")
+Follow
+Mistral AI_
+15.6k
+Text Generation
+Transformers
+PyTorch
+Safetensors
+mistral
+finetuned
+mistral-common
+conversational
+text-generation-inference
 
-# Sidebar: proveedor/modelo (igual que antes)
-# ... [mismo bloque de provider/model/model keys que en el starter] ...
+arxiv:
+2310.06825
 
-# Entrada específica HLA
-st.subheader("Datos de entrada")
+License:
+apache-2.0
+Model card
+Files
+xet
+Community
+225
+ A newer version of this model is available: mistralai/Mistral-7B-Instruct-v0.3
+Model Card for Mistral-7B-Instruct-v0.2
+Encode and Decode with mistral_common
+from mistral_common.tokens.tokenizers.mistral import MistralTokenizer
+from mistral_common.protocol.instruct.messages import UserMessage
+from mistral_common.protocol.instruct.request import ChatCompletionRequest
 
-hla_genotype = st.text_input(
-    "HLA genotipo (ej. HLA-A*01:01; HLA-B*08:01; HLA-C*07:01)",
-    help="Puedes pegar varios loci separados por ';'."
-)
+mistral_models_path = "MISTRAL_MODELS_PATH"
 
-variant = st.text_input(
-    "Variante regulatoria (rsID o pos/ref/alt)",
-    help="Ej. rs12345-A, o chr6:32500000 A>G"
-)
+tokenizer = MistralTokenizer.v1()
 
-extra_context = st.text_area(
-    "Contexto clínico / funcional (opcional)",
-    help="Por ejemplo: tipo de enfermedad, tejido, expresión conocida, etc."
-)
+completion_request = ChatCompletionRequest(messages=[UserMessage(content="Explain Machine Learning to me in a nutshell.")])
 
-# Historial de chat (para ir refinando la anotación)
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+tokens = tokenizer.encode_chat_completion(completion_request).tokens
 
-for m in st.session_state.messages:
-    with st.chat_message(m["role"]):
-        st.markdown(m["content"])
+Inference with mistral_inference
+from mistral_inference.transformer import Transformer
+from mistral_inference.generate import generate
 
-def build_system_prompt():
-    return (
-        "Eres un experto en genética HLA y variantes regulatorias. "
-        "Debes analizar el posible impacto de variantes en la región del MHC "
-        "sobre la regulación de genes HLA (promotores, enhancers, eQTL, etc.). "
-        "No inventes datos concretos de papers si no los recuerdas; habla en términos generales, "
-        "e indica claramente cuando algo es especulativo."
-    )
+model = Transformer.from_folder(mistral_models_path)
+out_tokens, _ = generate([tokens], model, max_tokens=64, temperature=0.0, eos_id=tokenizer.instruct_tokenizer.tokenizer.eos_id)
 
-def build_user_prompt(hla_genotype, variant, extra_context, user_query):
-    base = f"HLA genotipo: {hla_genotype}\nVariante regulatoria: {variant}\n"
-    if extra_context:
-        base += f"Contexto adicional: {extra_context}\n"
-    base += f"Pregunta del usuario: {user_query}\n"
-    base += (
-        "Devuelve:\n"
-        "- Posibles mecanismos regulatorios implicados (promotor, enhancer, splicing, miRNA binding, etc.).\n"
-        "- Si conoces ejemplos típicos en HLA similares, descríbelos de forma general.\n"
-        "- Un resumen final claro en lenguaje no excesivamente técnico."
-    )
-    return base
+result = tokenizer.decode(out_tokens[0])
 
-# Aquí reutilizas los helpers de llamada OpenAI/Anthropic/HF del starter,
-# pero pasándoles system_prompt + user_prompt en vez de todo el historial "crudo".
-# (copias las funciones call_openai, call_anthropic, call_hf y las adaptas a system+user)
+print(result)
 
-if user_query := st.chat_input("Pregunta sobre el impacto regulatorio, o deja en blanco y pide un resumen general."):
-    st.session_state.messages.append({"role": "user", "content": user_query})
-    with st.chat_message("user"):
-        st.markdown(user_query)
+Inference with hugging face transformers
+from transformers import AutoModelForCausalLM
 
-    with st.chat_message("assistant"):
-        with st.spinner("Analizando..."):
-            system_prompt = build_system_prompt()
-            user_prompt = build_user_prompt(hla_genotype, variant, extra_context, user_query)
-            # Aquí llamas a generate_response(system_prompt, user_prompt)
-            # que internamente usa el proveedor seleccionado.
-            response = "...respuesta del modelo..."
-            st.markdown(response)
+model = AutoModelForCausalLM.from_pretrained("mistralai/Mistral-7B-Instruct-v0.2")
+model.to("cuda")
 
-    st.session_state.messages.append({"role": "assistant", "content": response})
+generated_ids = model.generate(tokens, max_new_tokens=1000, do_sample=True)
+
+# decode with mistral tokenizer
+result = tokenizer.decode(generated_ids[0].tolist())
+print(result)
+
+PRs to correct the transformers tokenizer so that it gives 1-to-1 the same results as the mistral_common reference implementation are very welcome!
+
+The Mistral-7B-Instruct-v0.2 Large Language Model (LLM) is an instruct fine-tuned version of the Mistral-7B-v0.2.
+
+Mistral-7B-v0.2 has the following changes compared to Mistral-7B-v0.1
+
+32k context window (vs 8k context in v0.1)
+Rope-theta = 1e6
+No Sliding-Window Attention
+For full details of this model please read our paper and release blog post.
+
+Instruction format
+In order to leverage instruction fine-tuning, your prompt should be surrounded by [INST] and [/INST] tokens. The very first instruction should begin with a begin of sentence id. The next instructions should not. The assistant generation will be ended by the end-of-sentence token id.
+
+E.g.
+
+text = "<s>[INST] What is your favourite condiment? [/INST]"
+"Well, I'm quite partial to a good squeeze of fresh lemon juice. It adds just the right amount of zesty flavour to whatever I'm cooking up in the kitchen!</s> "
+"[INST] Do you have mayonnaise recipes? [/INST]"
+
+This format is available as a chat template via the apply_chat_template() method:
+
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+device = "cuda" # the device to load the model onto
+
+model = AutoModelForCausalLM.from_pretrained("mistralai/Mistral-7B-Instruct-v0.2")
+tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-Instruct-v0.2")
+
+messages = [
+    {"role": "user", "content": "What is your favourite condiment?"},
+    {"role": "assistant", "content": "Well, I'm quite partial to a good squeeze of fresh lemon juice. It adds just the right amount of zesty flavour to whatever I'm cooking up in the kitchen!"},
+    {"role": "user", "content": "Do you have mayonnaise recipes?"}
+]
+
+encodeds = tokenizer.apply_chat_template(messages, return_tensors="pt")
+
+model_inputs = encodeds.to(device)
+model.to(device)
+
+generated_ids = model.generate(model_inputs, max_new_tokens=1000, do_sample=True)
+decoded = tokenizer.batch_decode(generated_ids)
+print(decoded[0])
+
+Troubleshooting
+If you see the following error:
+Traceback (most recent call last):
+File "", line 1, in
+File "/transformers/models/auto/auto_factory.py", line 482, in from_pretrained
+config, kwargs = AutoConfig.from_pretrained(
+File "/transformers/models/auto/configuration_auto.py", line 1022, in from_pretrained
+config_class = CONFIG_MAPPING[config_dict["model_type"]]
+File "/transformers/models/auto/configuration_auto.py", line 723, in getitem
+raise KeyError(key)
+KeyError: 'mistral'
+
+Installing transformers from source should solve the issue pip install git+https://github.com/huggingface/transformers
+
+This should not be required after transformers-v4.33.4.
+
+Limitations
+The Mistral 7B Instruct model is a quick demonstration that the base model can be easily fine-tuned to achieve compelling performance. It does not have any moderation mechanisms. We're looking forward to engaging with the community on ways to make the model finely respect guardrails, allowing for deployment in environments requiring moderated outputs.
